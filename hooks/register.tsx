@@ -67,6 +67,33 @@ const claudeDir = async ($: EngineInterface) => {
   return home ? `${home}/.claude` : null
 }
 
+// Each installed plugin's name, commands and skills, mapped to the plugin.
+const pluginOwners = async ($: EngineInterface, root: string) => {
+  const owners: Record<string, string> = {}
+  const text = await $.fs.read(`${root}/plugins/installed_plugins.json`).catch(() => null)
+  if (text === null) return owners
+  let registry: { plugins?: Record<string, { installPath?: string }[]> }
+  try {
+    registry = JSON.parse(text)
+  } catch {
+    return owners
+  }
+  for (const [id, installs] of Object.entries(registry.plugins ?? {})) {
+    const plugin = id.split('@')[0] ?? id
+    owners[plugin] = plugin
+    const path = installs[0]?.installPath
+    if (!path) continue
+    for (const entry of await $.fs.list(`${path}/commands`).catch(() => [])) {
+      if (entry.kind === 'file' && entry.name.endsWith('.md')) owners[entry.name.slice(0, -3)] = plugin
+    }
+    for (const entry of await $.fs.list(`${path}/skills`).catch(() => [])) {
+      if (entry.kind === 'dir') owners[entry.name] = plugin
+    }
+  }
+
+  return owners
+}
+
 const refreshStats = async ($: EngineInterface) => {
   const root = await claudeDir($)
   if (!root) return
@@ -96,7 +123,7 @@ const refreshStats = async ($: EngineInterface) => {
     }
   }
 
-  const next = summarize(transcripts, now)
+  const next = summarize(transcripts, now, await pluginOwners($, root))
   await update($, stats, () => next)
 }
 

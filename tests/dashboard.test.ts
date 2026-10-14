@@ -34,6 +34,13 @@ const search = [
   prompt(400, 'too old to count'),
 ].join('\n')
 
+test('a bare command counts toward the installed plugin that ships it', async () => {
+  const used = [line({ type: 'user', timestamp: at(1), message: { content: '<command-name>/home-dashboard</command-name>' } })].join('')
+  const stats = summarize([parseTranscript(used)], NOW, { 'home-dashboard': 'home-dashboard' })
+  expect(stats.plugins).toEqual([{ name: 'home-dashboard', count: 1 }])
+  expect(stats.skills).toEqual([{ name: 'home-dashboard', count: 1 }])
+})
+
 test('a transcript yields its title, human prompts and tool uses', async () => {
   const t = parseTranscript(roblox)
   expect(t.title).toBe('Roblox Studio connection')

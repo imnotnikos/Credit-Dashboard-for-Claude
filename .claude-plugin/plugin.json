@@ -1,6 +1,6 @@
 {
   "name": "home-dashboard",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": { "name": "Nick" },
   "description": "A dashboard pane: session and weekly credit rings, main topics by day or week, and your most used plugins, connectors and skills.",
   "types": "./types/index.d.ts"

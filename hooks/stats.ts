@@ -126,7 +126,13 @@ const rank = (counts: Map<string, number>): DashboardRanked[] =>
 const bump = (counts: Map<string, number>, name: string, by = 1) =>
   counts.set(name, (counts.get(name) ?? 0) + by)
 
-export function summarize(transcripts: Transcript[], now: number): DashboardStats {
+// `owners` maps a bare command or skill name to the installed plugin that
+// ships it, since a plugin's own command is recorded without its prefix.
+export function summarize(
+  transcripts: Transcript[],
+  now: number,
+  owners: Record<string, string> = {},
+): DashboardStats {
   const day = new Map<string, number>()
   const week = new Map<string, number>()
   const month = new Map<string, number>()
@@ -147,7 +153,8 @@ export function summarize(transcripts: Transcript[], now: number): DashboardStat
       if (now - at > WEEK) continue
       const colon = name.indexOf(':')
       bump(skills, colon > 0 ? name.slice(colon + 1) : name)
-      if (colon > 0) bump(plugins, name.slice(0, colon))
+      const owner = colon > 0 ? name.slice(0, colon) : owners[name]
+      if (owner) bump(plugins, owner)
     }
 
     for (const { at, name } of t.mcp) {
