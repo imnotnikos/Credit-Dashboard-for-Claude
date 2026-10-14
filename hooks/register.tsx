@@ -48,6 +48,12 @@ const refreshConnectors = async ($: EngineInterface) => {
   return rows
 }
 
+// One switch for the button and /auto-connectors; remembered across chats.
+const setAuto = async ($: EngineInterface, isOn: boolean) => {
+  await update($, autoConnectors, () => isOn)
+  await $.store.set('autoConnectors', isOn)
+}
+
 // Forks the chat into a lean handoff doc saved under handoffs/; resolves the path or why it failed.
 const runHandoff = async ($: EngineInterface, focus: string) => {
   await update($, handoff, () => 'Writing…')
@@ -240,6 +246,11 @@ export const register: Register = on => {
       description: 'Write a lean markdown handoff doc for continuing in a new chat',
       argumentHint: '[what the next chat should focus on]',
     })
+    await $.command.register({
+      name: 'auto-connectors',
+      description: 'Turn automatic connector switching on or off (one small Haiku call per prompt while on)',
+      argumentHint: '[on|off]',
+    })
     const isAuto = (await $.store.get('autoConnectors')) === true
     await update($, autoConnectors, () => isAuto)
     void refreshConnectors($).catch(() => undefined)
@@ -265,6 +276,19 @@ export const register: Register = on => {
     if ('error' in r) return { text: `Handoff failed: ${r.error}` }
 
     return { text: `Handoff saved: ${r.path}\n\nIn a new chat, paste:\nRead ${r.path} and continue from where it leaves off.` }
+  })
+
+  on('command.run', { command: 'auto-connectors' }, async ($, e) => {
+    const arg = (e.args ?? '').trim().toLowerCase()
+    if (arg && arg !== 'on' && arg !== 'off') return { text: 'Usage: /auto-connectors [on|off]' }
+    const isOn = arg ? arg === 'on' : !(await read($, autoConnectors))
+    await setAuto($, isOn)
+
+    return {
+      text: isOn
+        ? 'Auto connectors: on. Before each prompt, Haiku picks the connectors it needs and the rest are switched off.'
+        : 'Auto connectors: off. Connectors stay as you set them, and no Haiku calls are made.',
+    }
   })
 
   on('prompt.compose', async ($, e, next) => {
@@ -487,10 +511,7 @@ export const register: Register = on => {
         label={isAuto ? 'Auto: on' : 'Auto: off'}
         hotkey="a"
         variant={isAuto ? 'primary' : 'secondary'}
-        onPress={async () => {
-          await update($, autoConnectors, current => !current)
-          await $.store.set('autoConnectors', await read($, autoConnectors))
-        }}
+        onPress={() => setAuto($, !isAuto)}
       />
     )
 
@@ -500,7 +521,7 @@ export const register: Register = on => {
         <Text dimColor>
           {isAuto
             ? 'Before each prompt, Haiku picks the connectors it needs and the rest are switched off.'
-            : 'Auto is off: connectors stay as you set them.'}
+            : 'Auto is off: connectors stay as you set them. Turn on here or with /auto-connectors on.'}
         </Text>
         {switched ? <Text>Last switch: {switched}</Text> : null}
         {!rowsNow ? (

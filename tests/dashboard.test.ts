@@ -126,6 +126,23 @@ test('the pane draws five cards; ranges, meters, chart view and auto connectors 
   }
 })
 
+test('/auto-connectors turns switching on, off, or flips it', async ($, on) => {
+  const stored = new Map<string, unknown>()
+  on('store.set', ($, e) => {
+    stored.set(e.key, e.value)
+    return { value: undefined }
+  })
+  // shortcut: the kit wants a full CommandRunInput (origin, presentation) the handler never reads.
+  const run = (args = '') => $.command.run({ command: 'auto-connectors', args } as never)
+  expect((await run('on')).text).toContain('on.')
+  expect(stored.get('autoConnectors')).toBe(true)
+  expect((await run('off')).text).toContain('off.')
+  expect(stored.get('autoConnectors')).toBe(false)
+  await run()
+  expect(stored.get('autoConnectors')).toBe(true)
+  expect((await run('maybe')).text).toContain('Usage')
+})
+
 test('connector plan: enable needed, disable idle, keep recent and local servers', async () => {
   const rows = [
     { name: 'Zapier', id: 'z1', kind: 'connector', isOn: true },
