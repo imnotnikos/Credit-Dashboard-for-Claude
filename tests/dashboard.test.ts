@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { parsePick, plan } from '../hooks/session-tools'
+import { connectorKey, parsePick, plan } from '../hooks/session-tools'
 import { parseTranscript, summarize } from '../hooks/stats'
 
 const NOW = Date.parse('2026-10-14T03:00:00.000Z')
@@ -150,8 +150,32 @@ test('connector plan: enable needed, disable idle, keep recent and local servers
     { name: 'Context7', id: 'c7', kind: 'connector', isOn: true },
     { name: 'Blender', kind: 'desktop', isOn: true },
   ]
-  expect(plan(rows, parsePick('Sure: ["firecrawl"]'), new Set(['c7']))).toEqual({ enable: ['Firecrawl'], disable: ['Zapier'] })
-  expect(plan(rows, parsePick('none'), new Set()).disable).toEqual(['Zapier', 'Context7'])
+  const names = (p: ReturnType<typeof plan>) => ({ enable: p.enable.map(r => r.name), disable: p.disable.map(r => r.name) })
+  expect(names(plan(rows, parsePick('Sure: ["firecrawl"]'), new Set(['c7'])))).toEqual({ enable: ['Firecrawl'], disable: ['Zapier'] })
+  expect(names(plan(rows, parsePick('none'), new Set())).disable).toEqual(['Zapier', 'Context7'])
+  // A recent call made through the name alias (mcp__Context7__…) also keeps it on.
+  expect(names(plan(rows, [], new Set(['Context7']))).disable).toEqual(['Zapier'])
+  expect(parsePick('[1, "Zapier", null]')).toEqual(['Zapier'])
+})
+
+test('connector plan: two connectors with one name are switched by id', async () => {
+  const rows = [
+    { name: 'Higgsfield AI', id: 'h1', kind: 'connector', isOn: true },
+    { name: 'Higgsfield AI', id: 'h2', kind: 'connector', isOn: true },
+  ]
+  const { enable, disable } = plan(rows, [], new Set(['h1']))
+  expect(enable).toEqual([])
+  expect(disable.map(connectorKey)).toEqual(['h2'])
+})
+
+test('/handoff reports a failed write instead of hanging on Writing…', { options: { handoffDir: 'E:/Vault' } }, async ($, on) => {
+  mock.clock(on, { now: NOW })
+  on('model.fork', () => ({ value: { isAnswered: true, text: '# Handoff: x', usage: {} } }) as never)
+  on('fs.write', () => {
+    throw new Error('disk full')
+  })
+  const r = await $.command.run({ command: 'handoff', args: '' } as never)
+  expect(r.text).toContain('Handoff failed:')
 })
 
 test('/handoff saves into the handoffDir option', { options: { handoffDir: 'E:/Vault/' } }, async ($, on) => {

@@ -7,8 +7,25 @@ import type {
   SessionRateLimit,
 } from 'claude-code'
 
-import type { DashboardMeter, DashboardRanked, DashboardRange, DashboardRing, DashboardUsage } from '../types'
-import { KEEP_FOR, PICK_SYSTEM, SET_TOOL, STATUS_TOOL, handoffPrompt, parseConnectors, parsePick, plan } from './session-tools'
+import type {
+  DashboardConnector,
+  DashboardMeter,
+  DashboardRanked,
+  DashboardRange,
+  DashboardRing,
+  DashboardUsage,
+} from '../types'
+import {
+  KEEP_FOR,
+  PICK_SYSTEM,
+  SET_TOOL,
+  STATUS_TOOL,
+  connectorKey,
+  handoffPrompt,
+  parseConnectors,
+  parsePick,
+  plan,
+} from './session-tools'
 import { parseTranscript, summarize } from './stats'
 import type { Transcript } from './stats'
 
@@ -55,20 +72,24 @@ const setAuto = async ($: EngineInterface, isOn: boolean) => {
 }
 
 // Forks the chat into a lean handoff doc saved in `dir` (default <cwd>/handoffs); resolves the path or why it failed.
-const runHandoff = async ($: EngineInterface, focus: string, dir: string) => {
+const runHandoff = async ($: EngineInterface, focus: string, dir: string): Promise<{ path: string } | { error: string }> => {
   await update($, handoff, () => 'Writing…')
-  const r = await $.model.fork({ prompt: handoffPrompt(focus) })
-  if (!r.isAnswered) {
-    await update($, handoff, () => `Failed: ${r.reason}`)
-    return { error: r.reason }
-  }
-  const stamp = new Date(await $.clock.now()).toISOString().slice(0, 19).replace(/[:T]/g, '-')
-  const folder = dir.trim().replace(/[\\/]+$/, '') || `${await $.session.cwd()}/handoffs`
-  const path = `${folder}/handoff-${stamp}.md`.replace(/\\/g, '/')
-  await $.fs.write(path, r.text.trim() + '\n')
-  await update($, handoff, () => path)
+  try {
+    const r = await $.model.fork({ prompt: handoffPrompt(focus) })
+    if (!r.isAnswered) throw new Error(r.reason)
+    const stamp = new Date(await $.clock.now()).toISOString().slice(0, 19).replace(/[:T]/g, '-')
+    const folder = dir.trim().replace(/[\\/]+$/, '') || `${await $.session.cwd()}/handoffs`
+    const path = `${folder}/handoff-${stamp}.md`.replace(/\\/g, '/')
+    await $.fs.write(path, r.text.trim() + '\n')
+    await update($, handoff, () => path)
 
-  return { path }
+    return { path }
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err)
+    await update($, handoff, () => `Failed: ${error}`)
+
+    return { error }
+  }
 }
 
 const tokens = (n: number) =>
@@ -135,6 +156,7 @@ const refreshStats = async ($: EngineInterface) => {
   const now = await $.clock.now()
   const projects = await $.fs.list(`${root}/projects`).catch(() => [])
   const transcripts: Transcript[] = []
+  const seen = new Set<string>()
 
   for (const project of projects) {
     if (project.kind !== 'dir') continue
@@ -144,6 +166,7 @@ const refreshStats = async ($: EngineInterface) => {
       if (file.kind !== 'file' || !file.name.endsWith('.jsonl')) continue
       if (now - file.mtimeMs > MONTH || file.size > MAX_READ) continue
       const path = `${dir}/${file.name}`
+      seen.add(path)
       const key = `${file.size}:${file.mtimeMs}`
       const kept = cache.get(path)
       if (kept?.key === key) {
@@ -157,6 +180,8 @@ const refreshStats = async ($: EngineInterface) => {
       transcripts.push(transcript)
     }
   }
+  // Drop files that aged out of the month or were deleted.
+  for (const path of cache.keys()) if (!seen.has(path)) cache.delete(path)
 
   const next = summarize(transcripts, now, await pluginOwners($, root))
   await update($, stats, () => next)
@@ -336,19 +361,25 @@ export const register: Register = (on, options) => {
       const needed = parsePick(reply.text)
       const recent = new Set([...lastUsed].filter(([, n]) => promptNo - n <= KEEP_FOR).map(([id]) => id))
       const { enable, disable } = plan(rows, needed, recent)
-      for (const name of enable) await $.tool.call({ tool: SET_TOOL, connector: name, enabled: true } as never)
-      for (const name of disable) await $.tool.call({ tool: SET_TOOL, connector: name, enabled: false } as never)
+      for (const r of enable) await $.tool.call({ tool: SET_TOOL, connector: connectorKey(r), enabled: true } as never)
+      for (const r of disable) await $.tool.call({ tool: SET_TOOL, connector: connectorKey(r), enabled: false } as never)
       if (enable.length || disable.length) {
-        const summary = [enable.length && `on: ${enable.join(', ')}`, disable.length && `off: ${disable.join(', ')}`]
+        const names = (list: DashboardConnector[]) => list.map(r => r.name).join(', ')
+        const summary = [enable.length && `on: ${names(enable)}`, disable.length && `off: ${names(disable)}`]
           .filter(Boolean)
           .join(' · ')
+        const turnedOn = new Set(enable.map(connectorKey))
+        const turnedOff = new Set(disable.map(connectorKey))
         await update($, lastSwitch, () => summary)
         await update($, connectors, list =>
-          (list ?? []).map(r => ({ ...r, isOn: enable.includes(r.name) || (r.isOn && !disable.includes(r.name)) })),
+          (list ?? []).map(r => ({
+            ...r,
+            isOn: turnedOn.has(connectorKey(r)) || (r.isOn && !turnedOff.has(connectorKey(r))),
+          })),
         )
         $.ui.toast(`Connectors ${summary}`)
         if (enable.length) {
-          const note = `Connectors just enabled for this request: ${enable.join(', ')}. Their tools may only appear next turn.`
+          const note = `Connectors just enabled for this request: ${names(enable)}. Their tools may only appear next turn.`
           return next({ ...e, context: [...(e.context ?? []), note] })
         }
       }
@@ -548,7 +579,7 @@ export const register: Register = (on, options) => {
     const handoffCard = card(
       'Handoff',
       <Box flexDirection="column" gap={1}>
-        <Text dimColor>Saves a lean summary of this chat to handoffs/ so a new chat can pick up. Also: /handoff [focus]</Text>
+        <Text dimColor>Saves a lean summary of this chat to {handoffDir.trim() || 'handoffs/'} so a new chat can pick up. Also: /handoff [focus]</Text>
         {saved ? <Text wrap="wrap">{saved}</Text> : null}
       </Box>,
       <Button key="handoff" label="Write" hotkey="h" onPress={() => void runHandoff($, '', handoffDir)} />,

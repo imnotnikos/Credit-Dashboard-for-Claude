@@ -45,23 +45,29 @@ export const parseConnectors = (r: unknown): DashboardConnector[] => {
   return servers.map(s => ({ name: s.name, id: s.id, kind: s.kind, isOn: s.status !== 'disabled' }))
 }
 
-/** The names in Haiku's reply: its first JSON array, [] when it gave none. */
+/** The names in Haiku's reply: the strings in its first JSON array, [] when it gave none. */
 export const parsePick = (reply: string): string[] => {
   const match = reply.match(/\[[\s\S]*?\]/)
+  const picked: unknown = match ? JSON.parse(match[0]) : []
 
-  return match ? (JSON.parse(match[0]) as string[]) : []
+  return Array.isArray(picked) ? picked.filter((x): x is string => typeof x === 'string') : []
 }
+
+/** The handle to switch a connector by: names can repeat (two "Higgsfield AI"), ids can't. */
+export const connectorKey = (row: DashboardConnector) => row.id ?? row.name
 
 /** Decides which connectors to switch: only claude.ai connectors (kind "connector") can be. */
 export const plan = (rows: DashboardConnector[], needed: string[], recent: Set<string>) => {
   const want = new Set(needed.map(n => n.toLowerCase()))
-  const enable: string[] = []
-  const disable: string[] = []
+  const enable: DashboardConnector[] = []
+  const disable: DashboardConnector[] = []
   for (const row of rows) {
     if (row.kind !== 'connector') continue
     const isNeeded = want.has(row.name.toLowerCase())
-    if (isNeeded && !row.isOn) enable.push(row.name)
-    if (!isNeeded && row.isOn && !recent.has(row.id ?? row.name)) disable.push(row.name)
+    // Tool calls name a server by id or, for some connectors, by name (mcp__visualize__…).
+    const isRecent = recent.has(connectorKey(row)) || recent.has(row.name)
+    if (isNeeded && !row.isOn) enable.push(row)
+    if (!isNeeded && row.isOn && !isRecent) disable.push(row)
   }
 
   return { enable, disable }
