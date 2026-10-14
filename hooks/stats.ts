@@ -2,6 +2,7 @@ import type { DashboardRanked, DashboardStats } from '../types'
 
 const DAY = 24 * 60 * 60 * 1000
 const WEEK = 7 * DAY
+const MONTH = 30 * DAY
 const TOP = 5
 
 // What one transcript file holds that the dashboard needs.
@@ -128,6 +129,7 @@ const bump = (counts: Map<string, number>, name: string, by = 1) =>
 export function summarize(transcripts: Transcript[], now: number): DashboardStats {
   const day = new Map<string, number>()
   const week = new Map<string, number>()
+  const month = new Map<string, number>()
   const plugins = new Map<string, number>()
   const skills = new Map<string, number>()
   const servers = new Map<string, { count: number; tools: string[] }>()
@@ -138,6 +140,8 @@ export function summarize(transcripts: Transcript[], now: number): DashboardStat
     const inWeek = t.prompts.filter(at => now - at <= WEEK).length
     if (inDay) bump(day, title, inDay)
     if (inWeek) bump(week, title, inWeek)
+    const inMonth = t.prompts.filter(at => now - at <= MONTH).length
+    if (inMonth) bump(month, title, inMonth)
 
     for (const { at, name } of t.skills) {
       if (now - at > WEEK) continue
@@ -167,7 +171,7 @@ export function summarize(transcripts: Transcript[], now: number): DashboardStat
   for (const [server, { count, tools }] of servers) bump(connectors, connectorLabel(server, tools), count)
 
   return {
-    topics: { day: rank(day), week: rank(week) },
+    topics: { day: rank(day), week: rank(week), month: rank(month) },
     plugins: rank(plugins),
     connectors: rank(connectors),
     skills: rank(skills),

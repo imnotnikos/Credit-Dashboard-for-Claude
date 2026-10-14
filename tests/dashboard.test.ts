@@ -43,12 +43,16 @@ test('a transcript yields its title, human prompts and tool uses', async () => {
   expect(parseTranscript(search).title).toBe('research mods')
 })
 
-test('topics rank by prompts in the day or the week, tools by the week', async () => {
+test('topics rank by prompts in the day, week or month, tools by the week', async () => {
   const stats = summarize([parseTranscript(roblox), parseTranscript(search)], NOW)
   expect(stats.topics.day).toEqual([{ name: 'Roblox Studio connection', count: 1 }])
   expect(stats.topics.week).toEqual([
     { name: 'Roblox Studio connection', count: 2 },
     { name: 'research mods', count: 1 },
+  ])
+  expect(stats.topics.month).toEqual([
+    { name: 'research mods', count: 2 },
+    { name: 'Roblox Studio connection', count: 2 },
   ])
   expect(stats.connectors).toEqual([
     { name: 'Firecrawl', count: 2 },
@@ -70,7 +74,7 @@ const PANE = {
   view: {},
 }
 
-test('the pane draws three cards and the day/week toggle switches', async ($, on) => {
+test('the pane draws three cards; ranges, meters and chart view toggle', async ($, on) => {
   mock.clock(on, { now: NOW })
   for (const surface of ['desktop', 'terminal'] as const) {
     const ui = await $.ui.mount({ plugin: 'home-dashboard', surface, component: 'Pane', requestId: 'dashboard', props: PANE })
@@ -81,7 +85,23 @@ test('the pane draws three cards and the day/week toggle switches', async ($, on
     expect((await ui.find({ key: 'range-week' }))?.props.variant).toBe('primary')
     await ui.press({ key: 'range-day' })
     expect((await ui.find({ key: 'range-day' }))?.props.variant).toBe('primary')
+    await ui.press({ key: 'range-month' })
+    expect((await ui.find({ key: 'range-month' }))?.props.variant).toBe('primary')
     await ui.press({ key: 'range-week' })
+
+    // Each meter toggles off and back on.
+    expect(await ui.find({ type: 'Text', text: 'Context' })).toBeDefined()
+    await ui.press({ key: 'toggle-context' })
+    expect((await ui.find({ key: 'toggle-context' }))?.text).toBe('○')
+    await ui.press({ key: 'toggle-context' })
+    expect((await ui.find({ key: 'toggle-context' }))?.text).toBe('◉')
+
+    // The chart icon switches rings to bars and back.
+    expect((await ui.find({ key: 'view-toggle' }))?.text).toBe('▂▅▇')
+    await ui.press({ key: 'view-toggle' })
+    expect((await ui.find({ key: 'view-toggle' }))?.text).toBe('◎')
+    if (surface === 'desktop') expect(String((await ui.find({ type: 'Svg' }))?.props.source)).toContain('<rect')
+    await ui.press({ key: 'view-toggle' })
     await ui.unmount()
   }
 })
