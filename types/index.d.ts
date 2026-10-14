@@ -10,6 +10,7 @@ export type DashboardStats = {
 export type DashboardRange = 'day' | 'week' | 'month'
 export type DashboardMeter = 'session' | 'weekly' | 'context'
 export type DashboardView = 'rings' | 'bars'
+export type DashboardConnector = { name: string; id?: string; kind: string; isOn: boolean }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -19,6 +20,10 @@ declare module 'claude-code' {
       range: DashboardRange
       view: DashboardView
       hidden: DashboardMeter[]
+      autoConnectors: boolean
+      connectors: DashboardConnector[] | null
+      lastSwitch: string | null
+      handoff: string | null
     }
   }
 }

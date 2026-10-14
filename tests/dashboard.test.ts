@@ -1,5 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
+import { parsePick, plan } from '../hooks/session-tools'
 import { parseTranscript, summarize } from '../hooks/stats'
 
 const NOW = Date.parse('2026-10-14T03:00:00.000Z')
@@ -81,13 +82,25 @@ const PANE = {
   view: {},
 }
 
-test('the pane draws three cards; ranges, meters and chart view toggle', async ($, on) => {
+test('the pane draws five cards; ranges, meters, chart view and auto connectors toggle', async ($, on) => {
   mock.clock(on, { now: NOW })
+  const stored = new Map<string, unknown>()
+  on('store.set', ($, e) => {
+    stored.set(e.key, e.value)
+    return { value: undefined }
+  })
   for (const surface of ['desktop', 'terminal'] as const) {
     const ui = await $.ui.mount({ plugin: 'home-dashboard', surface, component: 'Pane', requestId: 'dashboard', props: PANE })
     expect(await ui.find({ type: 'Text', text: 'Credit usage' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: 'Main topics' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: 'Most used' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Connectors' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Handoff' })).toBeDefined()
+    expect((await ui.find({ key: 'auto-toggle' }))?.props.label).toBe('Auto: off')
+    await ui.press({ key: 'auto-toggle' })
+    expect((await ui.find({ key: 'auto-toggle' }))?.props.label).toBe('Auto: on')
+    expect(stored.get('autoConnectors')).toBe(true)
+    await ui.press({ key: 'auto-toggle' })
     if (surface === 'desktop') expect(await ui.find({ type: 'Svg' })).toBeDefined()
     expect((await ui.find({ key: 'range-week' }))?.props.variant).toBe('primary')
     await ui.press({ key: 'range-day' })
@@ -111,4 +124,15 @@ test('the pane draws three cards; ranges, meters and chart view toggle', async (
     await ui.press({ key: 'view-toggle' })
     await ui.unmount()
   }
+})
+
+test('connector plan: enable needed, disable idle, keep recent and local servers', async () => {
+  const rows = [
+    { name: 'Zapier', id: 'z1', kind: 'connector', isOn: true },
+    { name: 'Firecrawl', id: 'f1', kind: 'connector', isOn: false },
+    { name: 'Context7', id: 'c7', kind: 'connector', isOn: true },
+    { name: 'Blender', kind: 'desktop', isOn: true },
+  ]
+  expect(plan(rows, parsePick('Sure: ["firecrawl"]'), new Set(['c7']))).toEqual({ enable: ['Firecrawl'], disable: ['Zapier'] })
+  expect(plan(rows, parsePick('none'), new Set()).disable).toEqual(['Zapier', 'Context7'])
 })

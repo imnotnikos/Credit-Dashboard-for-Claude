@@ -1,7 +1,7 @@
 {
   "name": "home-dashboard",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "author": { "name": "Nick" },
-  "description": "A dashboard pane: session and weekly credit rings, main topics by day or week, and your most used plugins, connectors and skills.",
+  "description": "A dashboard pane: credit rings, main topics, most used tools, automatic connector switching, and /handoff for continuing in a new chat.",
   "types": "./types/index.d.ts"
 }

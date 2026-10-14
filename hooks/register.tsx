@@ -8,6 +8,7 @@ import type {
 } from 'claude-code'
 
 import type { DashboardMeter, DashboardRanked, DashboardRange, DashboardRing, DashboardUsage } from '../types'
+import { KEEP_FOR, PICK_SYSTEM, SET_TOOL, STATUS_TOOL, handoffPrompt, parseConnectors, parsePick, plan } from './session-tools'
 import { parseTranscript, summarize } from './stats'
 import type { Transcript } from './stats'
 
@@ -35,6 +36,33 @@ const stats = atom({ plugin: 'home-dashboard', key: 'stats' } as const, null)
 const range = atom({ plugin: 'home-dashboard', key: 'range' } as const, 'week')
 const view = atom({ plugin: 'home-dashboard', key: 'view' } as const, 'rings')
 const hidden = atom({ plugin: 'home-dashboard', key: 'hidden' } as const, [])
+const autoConnectors = atom({ plugin: 'home-dashboard', key: 'autoConnectors' } as const, false)
+const connectors = atom({ plugin: 'home-dashboard', key: 'connectors' } as const, null)
+const lastSwitch = atom({ plugin: 'home-dashboard', key: 'lastSwitch' } as const, null)
+const handoff = atom({ plugin: 'home-dashboard', key: 'handoff' } as const, null)
+
+const refreshConnectors = async ($: EngineInterface) => {
+  const rows = parseConnectors(await $.tool.call({ tool: STATUS_TOOL } as never))
+  await update($, connectors, () => rows)
+
+  return rows
+}
+
+// Forks the chat into a lean handoff doc saved under handoffs/; resolves the path or why it failed.
+const runHandoff = async ($: EngineInterface, focus: string) => {
+  await update($, handoff, () => 'Writing…')
+  const r = await $.model.fork({ prompt: handoffPrompt(focus) })
+  if (!r.isAnswered) {
+    await update($, handoff, () => `Failed: ${r.reason}`)
+    return { error: r.reason }
+  }
+  const stamp = new Date(await $.clock.now()).toISOString().slice(0, 19).replace(/[:T]/g, '-')
+  const path = `${await $.session.cwd()}/handoffs/handoff-${stamp}.md`.replace(/\\/g, '/')
+  await $.fs.write(path, r.text.trim() + '\n')
+  await update($, handoff, () => path)
+
+  return { path }
+}
 
 const tokens = (n: number) =>
   n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n)
@@ -199,11 +227,22 @@ const barsSvg = (shown: Shown[]) => {
 }
 
 export const register: Register = on => {
+  let promptNo = 0
+  const lastUsed = new Map<string, number>() // connector id -> prompt number it was last used in
+
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'home-dashboard',
       description: 'Open the dashboard: credit usage, main topics, most used tools',
     })
+    await $.command.register({
+      name: 'handoff',
+      description: 'Write a lean markdown handoff doc for continuing in a new chat',
+      argumentHint: '[what the next chat should focus on]',
+    })
+    const isAuto = (await $.store.get('autoConnectors')) === true
+    await update($, autoConnectors, () => isAuto)
+    void refreshConnectors($).catch(() => undefined)
     void $.ui.open({ id: PANE, title: TITLE, columns: 46 })
     void refreshUsage($).catch(() => undefined)
     void refreshStats($).catch(() => undefined)
@@ -219,6 +258,79 @@ export const register: Register = on => {
     void refreshStats($).catch(() => undefined)
 
     return { text: 'Dashboard opened.' }
+  })
+
+  on('command.run', { command: 'handoff' }, async ($, e) => {
+    const r = await runHandoff($, e.args.trim())
+    if ('error' in r) return { text: `Handoff failed: ${r.error}` }
+
+    return { text: `Handoff saved: ${r.path}\n\nIn a new chat, paste:\nRead ${r.path} and continue from where it leaves off.` }
+  })
+
+  on('prompt.compose', async ($, e, next) => {
+    const composed = await next(e)
+    if (!(await read($, autoConnectors))) return composed
+
+    return {
+      ...composed,
+      sections: [
+        ...composed.sections,
+        {
+          id: 'home-dashboard-connectors',
+          scope: 'session',
+          text: `Connectors are switched off automatically when a prompt does not seem to need them. If a task needs a connector that is disabled, call ${SET_TOOL} with enabled: true, then tell the user its tools arrive next turn.`,
+        },
+      ],
+    }
+  })
+
+  on('tool.call', ($, e, next) => {
+    const id = e.tool.startsWith('mcp__') ? e.tool.split('__')[1] : undefined
+    if (id && id !== 'ccd_connectors') lastUsed.set(id, promptNo)
+
+    return next(e)
+  })
+
+  // Before each prompt, Haiku picks the connectors it needs; the rest are switched off.
+  on('prompt.submit', async ($, e, next) => {
+    promptNo += 1
+    const text = e.text.trim()
+    if (!text || text.startsWith('/') || !(await read($, autoConnectors))) return next(e)
+    try {
+      const rows = await refreshConnectors($)
+      const names = rows.filter(r => r.kind === 'connector').map(r => r.name)
+      if (names.length === 0) return next(e)
+      const reply = await $.model.complete({
+        model: 'haiku',
+        maxTokens: 200,
+        system: PICK_SYSTEM,
+        prompt: `Connectors: ${names.join(', ')}\n\nRequest:\n${text.slice(0, 4000)}`,
+      })
+      if (!reply.isAnswered) return next(e)
+      const needed = parsePick(reply.text)
+      const recent = new Set([...lastUsed].filter(([, n]) => promptNo - n <= KEEP_FOR).map(([id]) => id))
+      const { enable, disable } = plan(rows, needed, recent)
+      for (const name of enable) await $.tool.call({ tool: SET_TOOL, connector: name, enabled: true } as never)
+      for (const name of disable) await $.tool.call({ tool: SET_TOOL, connector: name, enabled: false } as never)
+      if (enable.length || disable.length) {
+        const summary = [enable.length && `on: ${enable.join(', ')}`, disable.length && `off: ${disable.join(', ')}`]
+          .filter(Boolean)
+          .join(' · ')
+        await update($, lastSwitch, () => summary)
+        await update($, connectors, list =>
+          (list ?? []).map(r => ({ ...r, isOn: enable.includes(r.name) || (r.isOn && !disable.includes(r.name)) })),
+        )
+        $.ui.toast(`Connectors ${summary}`)
+        if (enable.length) {
+          const note = `Connectors just enabled for this request: ${enable.join(', ')}. Their tools may only appear next turn.`
+          return next({ ...e, context: [...(e.context ?? []), note] })
+        }
+      }
+    } catch (err) {
+      $.ui.log(`home-dashboard: connector check skipped (${String(err)})`, { to: 'debug' })
+    }
+
+    return next(e)
   })
 
   on('session.measure', async ($, e, next) => {
@@ -364,11 +476,68 @@ export const register: Register = on => {
       <Text dimColor>7 days</Text>,
     )
 
+    const isAuto = await read($, autoConnectors)
+    const rowsNow = await read($, connectors)
+    const switched = await read($, lastSwitch)
+    const saved = await read($, handoff)
+
+    const autoButton = (
+      <Button
+        key="auto-toggle"
+        label={isAuto ? 'Auto: on' : 'Auto: off'}
+        hotkey="a"
+        variant={isAuto ? 'primary' : 'secondary'}
+        onPress={async () => {
+          await update($, autoConnectors, current => !current)
+          await $.store.set('autoConnectors', await read($, autoConnectors))
+        }}
+      />
+    )
+
+    const connectorsCard = card(
+      'Connectors',
+      <Box flexDirection="column" gap={1}>
+        <Text dimColor>
+          {isAuto
+            ? 'Before each prompt, Haiku picks the connectors it needs and the rest are switched off.'
+            : 'Auto is off: connectors stay as you set them.'}
+        </Text>
+        {switched ? <Text>Last switch: {switched}</Text> : null}
+        {!rowsNow ? (
+          <Text dimColor>Reading connectors…</Text>
+        ) : (
+          <Box flexDirection="column">
+            {rowsNow.map(r => (
+              <Box flexDirection="row" justifyContent="space-between" gap={1}>
+                <Text wrap="truncate-end" dimColor={r.kind !== 'connector'}>
+                  {r.kind === 'connector' ? (r.isOn ? '● ' : '○ ') : '· '}
+                  {r.name}
+                </Text>
+                <Text dimColor>{r.kind === 'connector' ? (r.isOn ? 'on' : 'off') : 'local'}</Text>
+              </Box>
+            ))}
+          </Box>
+        )}
+      </Box>,
+      autoButton,
+    )
+
+    const handoffCard = card(
+      'Handoff',
+      <Box flexDirection="column" gap={1}>
+        <Text dimColor>Saves a lean summary of this chat to handoffs/ so a new chat can pick up. Also: /handoff [focus]</Text>
+        {saved ? <Text wrap="wrap">{saved}</Text> : null}
+      </Box>,
+      <Button key="handoff" label="Write" hotkey="h" onPress={() => void runHandoff($, '')} />,
+    )
+
     return (
       <Box flexDirection="column" gap={1}>
         {usageCard}
         {topicsCard}
         {usedCard}
+        {connectorsCard}
+        {handoffCard}
       </Box>
     )
   })
