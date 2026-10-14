@@ -45,6 +45,14 @@ The pane opens when a session starts. Type `/home-dashboard` to reopen it, or `/
 
 Turn automatic connector switching on or off from the chat with `/auto-connectors on` or `/auto-connectors off` (no argument flips it). Your choice is remembered for new chats.
 
+Handoffs save to `handoffs/` in the chat's working folder. To save them somewhere else (an Obsidian vault, say), set **Handoff folder** in the plugin's options in `/config`, or add this to `~/.claude/settings.json`:
+
+```json
+"pluginConfigs": {
+  "home-dashboard@home-dashboard": { "options": { "handoffDir": "E:/Notes/Handoffs" } }
+}
+```
+
 With the pane focused, these keys work:
 
 | Key | Action |

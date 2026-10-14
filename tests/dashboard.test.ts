@@ -153,3 +153,16 @@ test('connector plan: enable needed, disable idle, keep recent and local servers
   expect(plan(rows, parsePick('Sure: ["firecrawl"]'), new Set(['c7']))).toEqual({ enable: ['Firecrawl'], disable: ['Zapier'] })
   expect(plan(rows, parsePick('none'), new Set()).disable).toEqual(['Zapier', 'Context7'])
 })
+
+test('/handoff saves into the handoffDir option', { options: { handoffDir: 'E:/Vault/' } }, async ($, on) => {
+  mock.clock(on, { now: NOW })
+  const written: string[] = []
+  on('model.fork', () => ({ value: { isAnswered: true, text: '# Handoff: x', usage: {} } }) as never)
+  on('fs.write', ($, e) => {
+    written.push(e.path)
+    return { value: undefined } as never
+  })
+  const r = await $.command.run({ command: 'handoff', args: '' } as never)
+  expect(written.map(p => p.split(String.fromCharCode(92)).join('/'))).toEqual(['E:/Vault/handoff-2026-10-14-03-00-00.md'])
+  expect(r.text).toContain('E:/Vault/handoff-')
+})

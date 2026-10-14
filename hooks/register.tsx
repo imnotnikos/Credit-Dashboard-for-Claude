@@ -54,8 +54,8 @@ const setAuto = async ($: EngineInterface, isOn: boolean) => {
   await $.store.set('autoConnectors', isOn)
 }
 
-// Forks the chat into a lean handoff doc saved under handoffs/; resolves the path or why it failed.
-const runHandoff = async ($: EngineInterface, focus: string) => {
+// Forks the chat into a lean handoff doc saved in `dir` (default <cwd>/handoffs); resolves the path or why it failed.
+const runHandoff = async ($: EngineInterface, focus: string, dir: string) => {
   await update($, handoff, () => 'Writing…')
   const r = await $.model.fork({ prompt: handoffPrompt(focus) })
   if (!r.isAnswered) {
@@ -63,7 +63,8 @@ const runHandoff = async ($: EngineInterface, focus: string) => {
     return { error: r.reason }
   }
   const stamp = new Date(await $.clock.now()).toISOString().slice(0, 19).replace(/[:T]/g, '-')
-  const path = `${await $.session.cwd()}/handoffs/handoff-${stamp}.md`.replace(/\\/g, '/')
+  const folder = dir.trim().replace(/[\\/]+$/, '') || `${await $.session.cwd()}/handoffs`
+  const path = `${folder}/handoff-${stamp}.md`.replace(/\\/g, '/')
   await $.fs.write(path, r.text.trim() + '\n')
   await update($, handoff, () => path)
 
@@ -232,7 +233,8 @@ const barsSvg = (shown: Shown[]) => {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 ${shown.length * BAR_ROW}"><g ${FONT}>${rows.join('')}</g></svg>`
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  const handoffDir = typeof options.handoffDir === 'string' ? options.handoffDir : ''
   let promptNo = 0
   const lastUsed = new Map<string, number>() // connector id -> prompt number it was last used in
 
@@ -272,7 +274,7 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'handoff' }, async ($, e) => {
-    const r = await runHandoff($, e.args.trim())
+    const r = await runHandoff($, e.args.trim(), handoffDir)
     if ('error' in r) return { text: `Handoff failed: ${r.error}` }
 
     return { text: `Handoff saved: ${r.path}\n\nIn a new chat, paste:\nRead ${r.path} and continue from where it leaves off.` }
@@ -549,7 +551,7 @@ export const register: Register = on => {
         <Text dimColor>Saves a lean summary of this chat to handoffs/ so a new chat can pick up. Also: /handoff [focus]</Text>
         {saved ? <Text wrap="wrap">{saved}</Text> : null}
       </Box>,
-      <Button key="handoff" label="Write" hotkey="h" onPress={() => void runHandoff($, '')} />,
+      <Button key="handoff" label="Write" hotkey="h" onPress={() => void runHandoff($, '', handoffDir)} />,
     )
 
     return (

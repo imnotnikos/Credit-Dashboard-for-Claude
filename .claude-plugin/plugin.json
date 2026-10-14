@@ -1,7 +1,17 @@
 {
   "name": "home-dashboard",
-  "version": "0.3.0",
-  "author": { "name": "Nick" },
+  "version": "0.3.1",
+  "author": {
+    "name": "Nick"
+  },
   "description": "A dashboard pane: credit rings, main topics, most used tools, automatic connector switching, and /handoff for continuing in a new chat.",
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "handoffDir": {
+      "type": "string",
+      "title": "Handoff folder",
+      "description": "Folder where /handoff saves its documents (absolute path). Empty: a handoffs folder inside the chat's working folder.",
+      "default": ""
+    }
+  }
 }
