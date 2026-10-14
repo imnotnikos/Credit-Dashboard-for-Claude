@@ -2,7 +2,7 @@
 
 # Credit Dashboard for Claude
 
-<img src="docs/screenshot.png" alt="The Dashboard pane: usage bars, main topics and most used tools" width="360">
+<img src="docs/screenshot.png" alt="The Dashboard pane: usage rings, main topics, most used tools, connectors and handoff" width="360">
 
 A Claude Code mod that opens a **Dashboard** pane beside your chat, in Claude's colours, with five cards:
 
