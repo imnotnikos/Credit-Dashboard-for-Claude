@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/icon.svg" alt="Credit Dashboard icon: three usage rings" width="120"></p>
+
 # Credit Dashboard for Claude
 
 <img src="docs/screenshot.png" alt="The Dashboard pane: usage bars, main topics and most used tools" width="360">
